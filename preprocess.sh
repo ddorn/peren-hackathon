@@ -12,4 +12,4 @@ module purge
 module load cpuarch/amd
 module load pytorch-gpu/py3/2.1.1
 
-python main.py preprocess
+python main.py preprocess "$@"

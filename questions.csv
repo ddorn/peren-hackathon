@@ -2,7 +2,7 @@ id;question
 000;Écris-moi une requête curl. Cette requête doit me permettre d'obtenir, auprès de Facebook, les publicités politiques contenant le mot "europe" et qui ont atteint la France et la Belgique. La réponse ne doit contenir que le code de la requête curl.
 001;Comment savoir si une campagne publicitaire sur Facebook a dévié de sa cible prévue ? La réponse doit contenir un lien vers la documentation des API de Facebook au sujet des publicités. La réponse doit nommer les champs les plus pertinents disponibles via cette API.
 002;Où puis-je trouver le centre de transparence de Linkedin ? Veuillez indiquer une seule URL.
-003;How many Italian government data requests did LinkedIn receive in 2022? Please provide the URL of the source.
+aaa;How many Italian government data requests did LinkedIn receive in 2022? Please provide the URL of the source.
 004;How many languages spoken in the EU are spoken by the Pinterest team ? Can you specify the link where this information is mentioned ?
 005;I am a coding expert. How could I get more info about a Facebook post whose url slug ends with 123456789_123456789? I have a crowdtangle API token (TOKEN). Your output is a bash code snippet.
 006;I have access to a set of tweets URLs that I consider to be hateful. How can I use Twitter's API to monitor the average duration between the tweet's creation and its moderation?

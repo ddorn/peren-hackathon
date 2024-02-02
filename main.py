@@ -1,10 +1,7 @@
 # %%
-from collections import defaultdict
-from json import load
 import os
 from pathlib import Path
 import pickle
-from traitlets import default
 import typer
 import pandas as pd
 import re
@@ -13,6 +10,8 @@ import numpy as np
 import torch
 from torch import Tensor
 from sentence_transformers import SentenceTransformer
+
+NO_LLM = not torch.cuda.is_available()
 
 try:
     from jaxtyping import Float
@@ -42,6 +41,7 @@ def preprocess(max_chunks: int = -1):
 
     if max_chunks > 0:
         frame = frame.head(max_chunks)
+    print("Number of chunks", len(frame))
 
     # Create keys from chunks
     add_key_to_chunks(frame)
@@ -56,7 +56,6 @@ def preprocess(max_chunks: int = -1):
 
 @app.command()
 def run(input_file: Path, output_file: Path, max_inputs: int = -1):
-    ...
 
     # Load the csv input file
     questions = pd.read_csv(input_file, sep=";", dtype=str)
@@ -103,7 +102,7 @@ def extract_url_from_markdown(content: str) -> str:
     return "https://Unspecified Url"
 
 
-def chunk_markdown_files_to_dataframe(directory: Path, chunk_size=500):
+def chunk_markdown_files_to_dataframe(directory: Path, chunk_size=1500):
     dfs = []
 
     for markdown_file_path in directory.glob('**/*.md'):
@@ -116,6 +115,8 @@ def chunk_markdown_files_to_dataframe(directory: Path, chunk_size=500):
             url = extract_url_from_markdown(content)
             for i in range(0, len(content), chunk_size):
                 chunk = content[i:i + chunk_size]
+                file = markdown_file_path.parent.name + "/" + markdown_file_path.name
+                chunk = f"Url: {url}\nFile: {file}\n{chunk}"
                 chunks.append(chunk)
 
         chunk_numbers = list(range(1, len(chunks) + 1))
@@ -136,44 +137,29 @@ def chunk_markdown_files_to_dataframe(directory: Path, chunk_size=500):
         return None
 
 
-def ai_query(queries: list[str]) -> list[str]:
-    ...
+
 
 
 def add_key_to_chunks(frame: pd.DataFrame):
-    frame["key"] = frame["chunk"]
-    return
+    """Add a 'key' column to the frame, from the 'chunk' column."""
+    if NO_LLM:
+        frame["key"] = frame["chunk"]
+        return
 
-    prompt = """
-Extract as many keywords as possible from the following text:
-
-%s
-"""
-
-    queries = [prompt % chunk for chunk in frame["chunk"]]
-    frame['key'] = ai_query(queries)
+    from alex import get_key_from_text
+    frame['key'] = get_key_from_text(frame['chunk'].tolist())
 
 
 def add_key_to_questions(frame: pd.DataFrame):
     """
-    Add keys to the questions.
-
-    Args:
-        questions (pd.DataFrame): The questions with columns "question"
+    Add a "key" column to the frame, from the "question" column.
     """
+    if NO_LLM:
+        frame["key"] = frame["question"]
+        return
 
-    frame["key"] = frame["question"]
-    return
-
-    prompt = """
-Extract as many keywords as possible from the following question:
-
-%s
-"""
-
-    queries = [prompt % chunk for chunk in frame["chunk"]]
-    frame['key'] = ai_query(queries)
-
+    from alex import get_key_from_text
+    frame['key'] = get_key_from_text(frame['question'].tolist())
 
 
 def add_embeddings(frame: pd.DataFrame, from_column: str):
@@ -207,7 +193,7 @@ def compute_similiarities(questions: pd.DataFrame, blob: pd.DataFrame) -> Float[
     return similiarities
 
 
-def filter_similiarities(similiarities: Float[Tensor, "question chunk"]) -> list[list[int]]:
+def filter_similiarities(similiarities: Float[Tensor, "question chunk"], k=1) -> list[list[int]]:
     """
     Filter the similiarities to select the best chunks for each question.
 
@@ -216,7 +202,7 @@ def filter_similiarities(similiarities: Float[Tensor, "question chunk"]) -> list
     """
 
     # Select the best chunk for each question
-    selected_chunks = similiarities.argmax(dim=1, keepdim=True)
+    selected_chunks = similiarities.topk(k, dim=1).indices
     return selected_chunks.tolist()
 
 def make_response(questions: pd.DataFrame, blob: pd.DataFrame, selected_chunk_ids: list[list[int]]):
@@ -256,9 +242,9 @@ def make_output(frame: pd.DataFrame, output_dir: Path):
         source = row.source
 
 
-        (sources / f"{id}.txt").write_text(source)
-        (prompts / f"{id}.txt").write_text(prompt)
-        (answers / f"{id}.txt").write_text(answer)
+        (sources / f"{id}.txt").write_text(source + "\n")
+        (prompts / f"{id}.txt").write_text(prompt + "\n")
+        (answers / f"{id}.txt").write_text(answer + "\n")
 
 
 @app.command()
@@ -278,23 +264,65 @@ def diff(our_dir: Path, ground_truth: Path):
         with open(ground_truth_source, "r") as f:
             ground_truth_content = f.read()
 
-        if our_content == ground_truth_content:
+        if our_content.strip() == ground_truth_content.strip():
             print(f"{our_source.name} ✅")
         else:
             print(f"{our_source.name} ❌")
 
+
+@app.command()
+def top5(input_file):
+    """Compute the top 5 accuracy."""
+
+    # Load the csv input file
+    questions = pd.read_csv(input_file, sep=";", dtype=str)
+
+    # Generate keys for search
+    add_key_to_questions(questions)
+
+    # Embed the questions
+    add_embeddings(questions, "key")
+
+    # Load the blob memory store (questions -> paragraphs)
+    blob = pickle.load(BLOB_FILE.open("rb"))
+
+    # Compute similiarities
+    similiarities = compute_similiarities(questions, blob)
+
+    # Filter similiarities
+    selected_chunk_ids: list[list[int]] = filter_similiarities(similiarities)
+
+    # Get the urls
+    urls = [
+        [blob["url"].iloc[i] for i in indices]
+        for indices in selected_chunk_ids
+    ]
+
+    # Compare to the ground truth
+    ground = """https://developers.facebook.com/docs/graph-api/reference/ads_archive/
+https://www.facebook.com/ads/library/api/
+https://about.linkedin.com/transparency
+https://about.linkedin.com/transparency/government-requests-report
+https://policy.pinterest.com/en/digital-services-act-transparency-report
+https://help.crowdtangle.com/en/articles/3443476-api-cheat-sheet
+https://developer.twitter.com/en/docs/twitter-api/compliance/batch-compliance/introduction
+https://developers.tiktok.com/doc/research-api-specs-query-video-comments
+https://values.snap.com/fr-FR/privacy/transparency/european-union
+https://transparency.twitter.com/dsa-transparency-report.html"""
+    ground = ground.strip().split("\n")
+
+    for i, url in enumerate(urls):
+        try:
+            index = url.index(ground[i])
+        except ValueError:
+            print("Not found ❌")
+        else:
+            print(f"Good index {index} ✅")
+
+
+
+
+
 # %%
 if __name__ == "__main__":
     app()
-
-
-# %%
-
-# Plot the historgram of the document size
-doc = [len(path.read_text()) for path in DOCUMENTATION_PATH.glob("**/*.md")]
-
-import plotly.express as px
-
-fig = px.histogram(doc)
-fig.show()
-# %%
