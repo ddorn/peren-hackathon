@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # run.sh: (mandatory). It will be called with a path to the questions csv file and with a path to an output directory.
